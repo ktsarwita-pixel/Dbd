@@ -674,7 +674,7 @@
   let menuOpen = false;
   let mapOptionsOpen = false;
   let currentMap = 'Baseplate';
-  const chaseAI = { x:0, y:0, think:0, phase:0, heading:0, stuckT:0, lastX:0, lastY:0, escapeT:0 };
+  const chaseAI = { x:0, y:0, think:0, phase:0, heading:0, stuckT:0, lastX:0, lastY:0, escapeT:0, routeScore:-Infinity };
   const killerAI = { charge:0, chargeGoal:0, aim:0, lungeSpeed:ATTACK.lungeSpeedBase };
   function maxLungeGap() { return Math.min(72, ATTACK.lungeSpeedExtra*ATTACK.lungeTime*0.68); }
   let infoOpen = false;       // shows the pre-game notice message
@@ -769,7 +769,7 @@
     dummy.vx=0; dummy.vy=0; dummy.spin=0; dummy.spinVel=0; dummy.flash=0; dummy.stunT=0;
     dummy.swinging=false; dummy.swingT=0; dummy.swingHitDone=false; dummy.swingCD=1.0;
     dummy.x = map.x + dummy.fx*map.w; dummy.y = map.y + dummy.fy*map.h;
-    chaseAI.x=0; chaseAI.y=0; chaseAI.think=0; chaseAI.phase=0; chaseAI.heading=0; chaseAI.stuckT=0; chaseAI.lastX=dummy.x; chaseAI.lastY=dummy.y; chaseAI.escapeT=0;
+    chaseAI.x=0; chaseAI.y=0; chaseAI.think=0; chaseAI.phase=0; chaseAI.heading=0; chaseAI.stuckT=0; chaseAI.lastX=dummy.x; chaseAI.lastY=dummy.y; chaseAI.escapeT=0; chaseAI.routeScore=-Infinity;
     killerAI.charge=0; killerAI.chargeGoal=0; killerAI.aim=0; killerAI.lungeSpeed=ATTACK.lungeSpeedBase;
     attack.active=false; attack.timer=0; attack.hitDone=false; attack.overcharged=false; attack.bursted=false; attack.combo=false;
     attack.hardStab=false;
@@ -2930,7 +2930,9 @@
             score+=Math.cos(a-escapeA)*0.24+clamp(openGap/90,0,1)*0.18;
           }
           // Bounded hysteresis stabilizes close alternatives without swamping the route scores.
-          score+=Math.cos(a-currentHeading)*0.08-Math.abs(turnDelta)/Math.PI*0.06;
+          score+=Math.cos(a-currentHeading)*0.08-Math.abs(turnDelta)/Math.PI*0.06
+            +Math.cos(a-motionHeading)*0.055;
+          if(Math.abs(turnDelta)<=Math.PI/32) incumbent=score;
           if(score>best){best=score;bestA=a;}
         }
         chaseAI.heading=bestA;
@@ -3085,7 +3087,12 @@
           // Size charge to the distance deficit: close hits use a quick tap; longer gaps use the
           // lunge bar proportionally. Aim at the survivor's predicted position at impact time.
           const aimX=predictedX-dummy.x, aimY=predictedY-dummy.y;
-          killerAI.aim=Math.atan2(aimY,aimX);
+          const targetAim=Math.atan2(aimY,aimX);
+          if(killerAI.charge<=0.001) killerAI.aim=targetAim;
+          else {
+            const aimDelta=Math.atan2(Math.sin(targetAim-killerAI.aim),Math.cos(targetAim-killerAI.aim));
+            killerAI.aim+=clamp(aimDelta,-3.8*ddt,3.8*ddt);
+          }
           // Positive means the gap is shrinking. (The previous sign treated a fleeing player
           // as closing, which systematically undercharged and made lunges miss behind them.)
           const interceptGap=Math.max(0,predictedDist-meleeRange);
