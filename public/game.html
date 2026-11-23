@@ -2895,6 +2895,10 @@
           const overshootPenalty=clamp((desiredDistance-sepFar)/Math.max(80,desiredDistance*0.65),0,1);
           const escapeScore=clamp((aCPA-distance+135)/300,0,1);
           const edgeScore=clamp((edge-10)/125,0,1);
+          // Corners are poor safe-havens: they give the survivor only one escape lane.
+          // Penalize simultaneous proximity to two walls, especially when the killer is distant.
+          const nearX=Math.min(left,right), nearY=Math.min(top,bottom);
+          const cornerPenalty=Math.exp(-nearX/120)*Math.exp(-nearY/120);
           const hazardScore=clamp(1-hazardPenalty/180,0,1);
           const continuityScore=(1+Math.cos(turnDelta))*0.5;
           const intentScore=(1+heading)*0.5;
@@ -2910,6 +2914,7 @@
           let score=flee
             ? escapeScore*(imminent?0.29:0.39)+edgeScore*(imminent?0.18:0.20)+hazardScore*0.14
               +continuityScore*0.09+intentScore*0.04+dodgeScore*(imminent?0.18:0.05)+genScore*0.08
+              -cornerPenalty*(distance>300?0.42:0.24)
             : interceptScore*0.36+progressScore*0.20-overshootPenalty*0.08
               +edgeScore*0.14+hazardScore*0.05+continuityScore*0.12+intentScore*0.07+genScore*0.06;
           score-=genPenalty*1.5;
