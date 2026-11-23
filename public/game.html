@@ -2795,7 +2795,7 @@
     const speedMult  = slowMult * hasteMult;
     let tvx, tvy;
     if (lunging) { tvx=Math.cos(player.angle)*attack.lungeSpeed; tvy=Math.sin(player.angle)*attack.lungeSpeed; }
-    else         { tvx=mx*MAX_SPEED*speedMult; tvy=my*MAX_SPEED*speedMult; }
+    else         { const roleSpeed=mode==='survivor'?1.18:1; tvx=mx*MAX_SPEED*speedMult*roleSpeed; tvy=my*MAX_SPEED*speedMult*roleSpeed; }
     const tS = 1 - Math.exp(-ACCEL*pdt);
     player.vx += (tvx - player.vx)*tS;
     player.vy += (tvy - player.vy)*tS;
@@ -2827,26 +2827,36 @@
       if (chaseAI.think<=0) {
         chaseAI.think=0.16; chaseAI.phase+=1;
         const flee=mode==='killer';
-        const horizon=flee?0.62:0.42;
+        const horizon=flee?0.72:0.38;
         const px=player.x+player.vx*horizon, py=player.y+player.vy*horizon;
+        const threatVX=player.vx, threatVY=player.vy;
         const base=Math.atan2(flee ? -dy : py-dummy.y, flee ? -dx : px-dummy.x);
         let best=-Infinity, bestA=base;
         // Test candidate headings against predicted separation and edge danger.
         for(let i=0;i<24;i++){
           const a=i*Math.PI*2/24;
-          const speed=flee?150:176;
+          const speed=flee?190:184;
           const tx=dummy.x+Math.cos(a)*speed*horizon, ty=dummy.y+Math.sin(a)*speed*horizon;
-          const edge=Math.min(tx-map.x,map.x+map.w-tx,ty-map.y,map.y+map.h-ty);
+          const left=tx-map.x, right=map.x+map.w-tx, top=ty-map.y, bottom=map.y+map.h-ty;
+          const edge=Math.min(left,right,top,bottom);
           const sep=Math.hypot(tx-px,ty-py);
           const heading=Math.cos(a-base);
           const inertia=Math.cos(a-Math.atan2(dummy.vy,dummy.vx));
-          let score=flee ? sep*1.15 + Math.min(edge,100)*1.1 + heading*12 + inertia*8
-                         : -sep*1.25 + Math.min(edge,80)*0.18 + heading*18 + inertia*5;
-          // When close, side-step attacks instead of blindly running directly away.
-          if(flee && distance<155) score += Math.sin(a-base)*(chaseAI.phase%2?18:-18);
+          // Strong smooth repulsion from every border; corner positions pay two penalties at once.
+          const wallRisk=260/(Math.max(8,left)+24)+260/(Math.max(8,right)+24)+260/(Math.max(8,top)+24)+260/(Math.max(8,bottom)+24);
+          let score=flee ? sep*1.25 - wallRisk*190 + heading*10 + inertia*5
+                         : -sep*1.3 - wallRisk*115 + heading*20 + inertia*4;
+          // Predict the pursuer's approach and favor a safe lateral cut when it is close, not a predictable straight-line retreat.
+          if(flee && distance<210) {
+            const futurePX=player.x+threatVX*0.34, futurePY=player.y+threatVY*0.34;
+            const approach=Math.atan2(futurePY-dummy.y,futurePX-dummy.x);
+            const lateral=Math.abs(Math.sin(a-approach));
+            score += lateral*Math.max(0,210-distance)*0.38;
+            if(distance<105 && edge>dummy.r+18) score += lateral*22;
+          }
           if(score>best){best=score;bestA=a;}
         }
-        chaseAI.x=Math.cos(bestA)*(flee?150:176); chaseAI.y=Math.sin(bestA)*(flee?150:176);
+        chaseAI.x=Math.cos(bestA)*(flee?190:184); chaseAI.y=Math.sin(bestA)*(flee?190:184);
       }
       const blend=1-Math.exp(-5.5*ddt);
       dummy.vx+=(chaseAI.x-dummy.vx)*blend; dummy.vy+=(chaseAI.y-dummy.vy)*blend;
