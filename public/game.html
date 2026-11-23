@@ -2861,7 +2861,7 @@
           // Score the full swept route against the generator's solid hit circle.
           const segX=tx-dummy.x, segY=ty-dummy.y;
           const genT=clamp(((gen.x-dummy.x)*segX+(gen.y-dummy.y)*segY)/(segX*segX+segY*segY||1),0,1);
-          const genClearance=Math.hypot(dummy.x+segX*genT-gen.x,dummy.y+segY*genT-gen.y)-gen.r-dummy.r;
+          const genClearance=Math.hypot(dummy.x+segX*genT-gen.x,dummy.y+segY*genT-gen.y)-gen.r-dummy.r-10;
           const genScore=clamp(genClearance/60,0,1);
           const genPenalty=genClearance<0 ? 1+Math.min(1,-genClearance/30) : 0;
           const sepFar=Math.hypot(tx-px,ty-py);
@@ -2916,7 +2916,7 @@
           // If movement repeatedly fails, prioritize clear space away from nearby boundaries
           // and obstacles for a short recovery window instead of repeating the blocked route.
           if(chaseAI.escapeT>0){
-            const escapeX=(dummy.x-map.x)-(map.x+map.w-dummy.x), escapeY=(dummy.y-map.y)-(map.y+map.h-dummy.y);
+            const escapeX=(map.x+map.w-dummy.x)-(dummy.x-map.x), escapeY=(map.y+map.h-dummy.y)-(dummy.y-map.y);
             const escapeA=Math.atan2(escapeY,escapeX);
             const openX=dummy.x+Math.cos(a)*90, openY=dummy.y+Math.sin(a)*90;
             const openGap=Math.hypot(openX-gen.x,openY-gen.y)-(gen.r+dummy.r);
@@ -2944,17 +2944,26 @@
         const accel=1-Math.exp(-(threat?7:3.4)*ddt);
         const nextSpeed=clamp(curSpeed+(speed-curSpeed)*accel,0,speed);
         dummy.vx=Math.cos(nextAngle)*nextSpeed; dummy.vy=Math.sin(nextAngle)*nextSpeed;
+        const oldX=dummy.x, oldY=dummy.y;
         const nx=clamp(dummy.x+dummy.vx*ddt,map.x+dummy.r,map.x+map.w-dummy.r);
         const ny=clamp(dummy.y+dummy.vy*ddt,map.y+dummy.r,map.y+map.h-dummy.r);
         // Remove blocked velocity components at map edges instead of accumulating wall jitter.
         if(nx===dummy.x) dummy.vx=0; if(ny===dummy.y) dummy.vy=0;
         dummy.x=nx; dummy.y=ny;
-        // Physical collision fallback for knockback and planner-tick transitions.
-        const gx=dummy.x-gen.x, gy=dummy.y-gen.y, gd=Math.hypot(gx,gy)||0.001;
+        // Sweep the motion segment against the generator so even high-speed knockback cannot
+        // tunnel through its circle between frames. Slide along the tangent after contact.
         const minGenDist=dummy.r+gen.r;
-        if(gd<minGenDist){
-          const ux=gx/gd, uy=gy/gd;
-          dummy.x=gen.x+ux*minGenDist; dummy.y=gen.y+uy*minGenDist;
+        const mx=nx-oldX, my=ny-oldY;
+        const mt=clamp(((gen.x-oldX)*mx+(gen.y-oldY)*my)/(mx*mx+my*my||1),0,1);
+        const nearX=oldX+mx*mt, nearY=oldY+my*mt;
+        const nearDX=nearX-gen.x, nearDY=nearY-gen.y, nearD=Math.hypot(nearDX,nearDY)||0.001;
+        if(nearD<minGenDist){
+          const ux=nearDX/nearD, uy=nearDY/nearD;
+          const side=(oldX-gen.x)*ux+(oldY-gen.y)*uy;
+          if(side>=0){dummy.x=oldX+ux*mx+uy*my; dummy.y=oldY+uy*mx-ux*my;}
+          else {dummy.x=gen.x+ux*(minGenDist+0.5); dummy.y=gen.y+uy*(minGenDist+0.5);}
+          const gx=dummy.x-gen.x, gy=dummy.y-gen.y, gd=Math.hypot(gx,gy)||0.001;
+          if(gd<minGenDist){dummy.x=gen.x+gx/gd*(minGenDist+0.5);dummy.y=gen.y+gy/gd*(minGenDist+0.5);}
           const inward=dummy.vx*ux+dummy.vy*uy;
           if(inward<0){dummy.vx-=ux*inward; dummy.vy-=uy*inward;}
         }
