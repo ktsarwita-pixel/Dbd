@@ -2839,7 +2839,7 @@
         const threatVX=player.vx, threatVY=player.vy;
         const base=Math.atan2(flee ? -dy : py-dummy.y, flee ? -dx : px-dummy.x);
         let best=-Infinity, bestA=base;
-        const speed=flee?216:250;
+        const speed=flee?185:205;
         const currentHeading=Math.hypot(dummy.vx,dummy.vy)>18?Math.atan2(dummy.vy,dummy.vx):chaseAI.heading;
         // Score a dense fan of candidate routes against two future positions; turn-cost stabilizes steering.
         for(let i=0;i<32;i++){
