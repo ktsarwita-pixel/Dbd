@@ -676,6 +676,7 @@
   let currentMap = 'Baseplate';
   const chaseAI = { x:0, y:0, think:0, phase:0, heading:0 };
   const killerAI = { charge:0, chargeGoal:0, aim:0, lungeSpeed:ATTACK.lungeSpeedBase };
+  function maxLungeGap() { return Math.min(72, ATTACK.lungeSpeedExtra*ATTACK.lungeTime*0.68); }
   let infoOpen = false;       // shows the pre-game notice message
   let infoAnim = 0;           // 0..1 animated open state of the info overlay
   // Info overlay pages: 'notice' (landing) -> 'ainfo' (mechanics) or 'updates' (changelog).
@@ -2864,8 +2865,17 @@
           let turnDelta=Math.atan2(Math.sin(a-currentHeading),Math.cos(a-currentHeading));
           // Strong smooth repulsion from every border; corner positions pay two penalties at once.
           const wallRisk=260/(Math.max(8,left)+24)+260/(Math.max(8,right)+24)+260/(Math.max(8,top)+24)+260/(Math.max(8,bottom)+24);
-          let score=flee ? sep*1.55 - wallRisk*220 + heading*3 + inertia*12 - hazardPenalty
-                         : -sep*1.55 - wallRisk*90 + heading*4 + inertia*10 - hazardPenalty;
+          // Independent planner terms: separation/intercept, preferred spacing, wall safety,
+          // and heading continuity. The chase planner maintains a soft standoff instead of
+          // steering through the player and relying on body collision to separate them.
+          const preferredGap=(block.state==='active' || (player.immuneT>0 && RESURGEON.immuneToDamage))
+            ? BOX.fwd+BOX.halfLen+player.r+82
+            : (dummy.swingCD<=0 ? BOX.fwd+BOX.halfLen+player.r+maxLungeGap() : BOX.fwd+BOX.halfLen+player.r+22);
+          const spacingError=(Math.abs(sepNear-preferredGap)*0.58+Math.abs(sepFar-preferredGap)*0.42);
+          const progressScore=flee ? sep*1.55 : -spacingError*1.65;
+          const safetyScore=-wallRisk*(flee?220:90)-hazardPenalty;
+          const continuityScore=heading*(flee?3:4)+inertia*(flee?12:10);
+          let score=progressScore+safetyScore+continuityScore;
           // Favor outward escape most of the time; only hard-dodge across the attack line when a swing/charge is imminent.
           if(flee && distance<210 && (charging || attack.active)) {
             const futurePX=clamp(player.x+threatVX*0.34,map.x+player.r,map.x+map.w-player.r);
