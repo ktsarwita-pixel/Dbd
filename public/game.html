@@ -2846,9 +2846,11 @@
         const px=pFar.x, py=pFar.y;
         const threatVX=player.vx, threatVY=player.vy;
         const base=Math.atan2(flee ? -dy : py-dummy.y, flee ? -dx : px-dummy.x);
-        let best=-Infinity, bestA=base;
+        let best=-Infinity, bestA=base, incumbent=-Infinity;
         const speed=flee?185:205;
         const currentHeading=chaseAI.phase>1?chaseAI.heading:base;
+        const motionSpeed=Math.hypot(dummy.vx,dummy.vy);
+        const motionHeading=motionSpeed>12?Math.atan2(dummy.vy,dummy.vx):currentHeading;
         // Receding-horizon route planner (MPC): independent progress, spacing, hazard, wall,
         // attack-response, and steering-continuity scorers evaluate 32 candidate velocities.
         for(let i=0;i<32;i++){
@@ -2935,6 +2937,11 @@
           if(Math.abs(turnDelta)<=Math.PI/32) incumbent=score;
           if(score>best){best=score;bestA=a;}
         }
+        // Route hysteresis: retain the current route through near-ties, but let clear
+        // improvements, urgent threats, and stuck recovery immediately choose another path.
+        const headingChange=Math.abs(Math.atan2(Math.sin(bestA-currentHeading),Math.cos(bestA-currentHeading)));
+        if(!urgentThreat && chaseAI.escapeT<=0 && chaseAI.phase>1 && incumbent>-Infinity &&
+           headingChange>Math.PI/8 && best-incumbent<0.24) bestA=currentHeading;
         chaseAI.heading=bestA;
         chaseAI.x=Math.cos(bestA)*speed; chaseAI.y=Math.sin(bestA)*speed;
       }
