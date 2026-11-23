@@ -2851,6 +2851,12 @@
           const edge=Math.min(left,right,top,bottom);
           const tNearX=dummy.x+Math.cos(a)*speed*0.32, tNearY=dummy.y+Math.sin(a)*speed*0.32;
           const sepNear=Math.hypot(tNearX-pNear.x,tNearY-pNear.y);
+          // Score the full swept route against the generator's solid hit circle.
+          const segX=tx-dummy.x, segY=ty-dummy.y;
+          const genT=clamp(((gen.x-dummy.x)*segX+(gen.y-dummy.y)*segY)/(segX*segX+segY*segY||1),0,1);
+          const genClearance=Math.hypot(dummy.x+segX*genT-gen.x,dummy.y+segY*genT-gen.y)-gen.r-dummy.r;
+          const genScore=clamp(genClearance/60,0,1);
+          const genPenalty=genClearance<0 ? 1+Math.min(1,-genClearance/30) : 0;
           const sepFar=Math.hypot(tx-px,ty-py);
           let hazardPenalty=0;
           if(flee){
@@ -2890,9 +2896,10 @@
           // from dominating. Weights adapt to role and imminent danger.
           const imminent=flee && distance<210 && (charging || attack.active);
           let score=flee
-            ? escapeScore*(imminent?0.31:0.43)+edgeScore*(imminent?0.20:0.22)+hazardScore*0.16
-              +continuityScore*0.10+intentScore*0.04+dodgeScore*(imminent?0.19:0.05)
-            : interceptScore*0.50+edgeScore*0.18+hazardScore*0.06+continuityScore*0.18+intentScore*0.08;
+            ? escapeScore*(imminent?0.29:0.39)+edgeScore*(imminent?0.18:0.20)+hazardScore*0.14
+              +continuityScore*0.09+intentScore*0.04+dodgeScore*(imminent?0.18:0.05)+genScore*0.08
+            : interceptScore*0.45+edgeScore*0.16+hazardScore*0.06+continuityScore*0.16+intentScore*0.07+genScore*0.10;
+          score-=genPenalty*1.5;
           // Bounded hysteresis stabilizes close alternatives without swamping the route scores.
           score+=Math.cos(a-currentHeading)*0.08-Math.abs(turnDelta)/Math.PI*0.06;
           if(score>best){best=score;bestA=a;}
@@ -2920,6 +2927,15 @@
         // Remove blocked velocity components at map edges instead of accumulating wall jitter.
         if(nx===dummy.x) dummy.vx=0; if(ny===dummy.y) dummy.vy=0;
         dummy.x=nx; dummy.y=ny;
+        // Physical collision fallback for knockback and planner-tick transitions.
+        const gx=dummy.x-gen.x, gy=dummy.y-gen.y, gd=Math.hypot(gx,gy)||0.001;
+        const minGenDist=dummy.r+gen.r;
+        if(gd<minGenDist){
+          const ux=gx/gd, uy=gy/gd;
+          dummy.x=gen.x+ux*minGenDist; dummy.y=gen.y+uy*minGenDist;
+          const inward=dummy.vx*ux+dummy.vy*uy;
+          if(inward<0){dummy.vx-=ux*inward; dummy.vy-=uy*inward;}
+        }
       }
     }
     // dummy faces the player (for aiming the killer / X orientation)
