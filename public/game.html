@@ -2830,7 +2830,7 @@
       if (chaseAI.think<=0) {
         chaseAI.think=urgentThreat?0.11:0.16; chaseAI.phase+=1;
         const flee=mode==='killer';
-        const horizon=flee?0.82:0.52;
+        const horizon=flee?0.72:0.34;
         // Extrapolate short and long pursuit paths, clamping forecasts to the arena so a
         // boundary stop is not mistaken for continued full-speed travel through the wall.
         const forecast=(t)=>({x:clamp(player.x+player.vx*t,map.x+player.r,map.x+map.w-player.r),y:clamp(player.y+player.vy*t,map.y+player.r,map.y+map.h-player.r)});
@@ -2840,7 +2840,7 @@
         const base=Math.atan2(flee ? -dy : py-dummy.y, flee ? -dx : px-dummy.x);
         let best=-Infinity, bestA=base;
         const speed=flee?185:205;
-        const currentHeading=Math.hypot(dummy.vx,dummy.vy)>18?Math.atan2(dummy.vy,dummy.vx):chaseAI.heading;
+        const currentHeading=chaseAI.phase>1?chaseAI.heading:base;
         // Score a dense fan of candidate routes against two future positions; turn-cost stabilizes steering.
         for(let i=0;i<32;i++){
           const a=i*Math.PI*2/32;
@@ -2884,8 +2884,10 @@
               score += sideStep*Math.max(0,230-distance)*0.95 - linePenalty;
             }
           }
-          score += Math.cos(a-chaseAI.heading)*(flee?22:30);
-          score-=Math.abs(turnDelta)*(flee?18:22);
+          // Strong steering hysteresis prevents candidate headings from flipping back and forth
+          // as tiny player-velocity changes reorder nearly-equal routes.
+          score += Math.cos(a-currentHeading)*(flee?48:64);
+          score-=Math.abs(turnDelta)*(flee?34:42);
           if(score>best){best=score;bestA=a;}
         }
         chaseAI.heading=bestA;
@@ -2901,9 +2903,9 @@
         if(curSpeed>speed){ const scale=speed/curSpeed; dummy.vx*=scale; dummy.vy*=scale; curSpeed=speed; }
         const curAngle=curSpeed>8?Math.atan2(dummy.vy,dummy.vx):desiredAngle;
         let turn=Math.atan2(Math.sin(desiredAngle-curAngle),Math.cos(desiredAngle-curAngle));
-        turn=clamp(turn,-(threat?6.5:3.8)*ddt,(threat?6.5:3.8)*ddt);
+        turn=clamp(turn,-(threat?5.2:2.6)*ddt,(threat?5.2:2.6)*ddt);
         const nextAngle=curAngle+turn;
-        const accel=1-Math.exp(-(threat?8:4.2)*ddt);
+        const accel=1-Math.exp(-(threat?7:3.4)*ddt);
         const nextSpeed=clamp(curSpeed+(speed-curSpeed)*accel,0,speed);
         dummy.vx=Math.cos(nextAngle)*nextSpeed; dummy.vy=Math.sin(nextAngle)*nextSpeed;
         const nx=clamp(dummy.x+dummy.vx*ddt,map.x+dummy.r,map.x+map.w-dummy.r);
@@ -3011,11 +3013,11 @@
         const dx=player.x-dummy.x, dy=player.y-dummy.y, dist=Math.hypot(dx,dy)||1;
         const meleeRange=BOX.fwd+BOX.halfLen+player.r+8;
         const maxTravel=ATTACK.lungeSpeedBase*ATTACK.lungeTime + ATTACK.lungeSpeedExtra*ATTACK.lungeTime;
-        const relVX=player.vx-dummy.vx, relVY=player.vy-dummy.vy;
-        const lead=clamp(dist/(ATTACK.lungeSpeedBase+90),0.12,0.55);
+        const lead=ATTACK.hitStart*ATTACK.duration+0.06;
         const predictedX=clamp(player.x+player.vx*lead,map.x+player.r,map.x+map.w-player.r);
         const predictedY=clamp(player.y+player.vy*lead,map.y+player.r,map.y+map.h-player.r);
-        const predictedDist=Math.hypot(predictedX-(dummy.x+dummy.vx*lead),predictedY-(dummy.y+dummy.vy*lead));
+        // Chasing pauses during charge; do not extrapolate stale killer velocity into its range estimate.
+        const predictedDist=Math.hypot(predictedX-dummy.x,predictedY-dummy.y);
         const safeFromDefense=!(block.state==='active' || (player.immuneT>0 && RESURGEON.immuneToDamage));
         const canCharge=currentMap==='Test run' && safeFromDefense && dummy.swingCD<=0 && predictedDist<meleeRange+maxTravel;
         if(canCharge){
@@ -3025,8 +3027,7 @@
           killerAI.aim=Math.atan2(aimY,aimX);
           // Positive means the gap is shrinking. (The previous sign treated a fleeing player
           // as closing, which systematically undercharged and made lunges miss behind them.)
-          const closingSpeed=-((relVX*dx+relVY*dy)/dist);
-          const interceptGap=Math.max(0,predictedDist-meleeRange-Math.max(0,closingSpeed)*lead);
+          const interceptGap=Math.max(0,predictedDist-meleeRange);
           killerAI.chargeGoal=clamp(interceptGap/maxTravel,0.06,1);
           killerAI.charge=Math.min(killerAI.chargeGoal,killerAI.charge+ddt/CHARGE_TIME);
           dummy.face=killerAI.aim;
