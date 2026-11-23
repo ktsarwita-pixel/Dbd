@@ -247,7 +247,8 @@
     info:      { x:0, y:0, r:17 },
     mode:      { x:0, y:0, r:17 },
     menu:      { x:0, y:0, r:17 },
-    reset:     { x:0, y:0, r:17 }
+    reset:     { x:0, y:0, r:17 },
+    map:       { x:0, y:0, r:17 }
   };
   const dialLabelCache = new Map();
   // ---- glow system: no shadowBlur in per-frame drawing ----
@@ -411,6 +412,7 @@
     hudCache.mode.x  = map.x + topInset + topR; hudCache.mode.y = map.y + topInset + topR; hudCache.mode.r = topR;
     hudCache.menu.x  = hudCache.mode.x + topR*2 + topGap; hudCache.menu.y = hudCache.mode.y; hudCache.menu.r = topR;
     hudCache.reset.x = hudCache.menu.x + topR*2 + topGap; hudCache.reset.y = hudCache.mode.y; hudCache.reset.r = topR;
+    hudCache.map.x = hudCache.reset.x + topR*2 + topGap; hudCache.map.y = hudCache.mode.y; hudCache.map.r = topR;
   }
   function makeOffscreen(w, h) {
     if (typeof document === 'undefined' || !document.createElement) return null;
@@ -670,6 +672,8 @@
   let resRootY = null;
   let debug = false;
   let menuOpen = false;
+  let mapOptionsOpen = false;
+  let currentMap = 'Baseplate';
   let infoOpen = false;       // shows the pre-game notice message
   let infoAnim = 0;           // 0..1 animated open state of the info overlay
   // Info overlay pages: 'notice' (landing) -> 'ainfo' (mechanics) or 'updates' (changelog).
@@ -930,6 +934,8 @@
   canvas.addEventListener('mousedown', e => {
     const meb = menuButton();
     if (infoOpen) { infoPointerDown(-1, e.clientX, e.clientY); return; }
+    if (mapOptionsOpen) { handleMapOption(e.clientX,e.clientY); return; }
+    const mapBtn=mapButton(); if (Math.hypot(e.clientX-mapBtn.x,e.clientY-mapBtn.y)<=mapBtn.r) { mapOptionsOpen=true; return; }
     if (menuOpen) {
       if (Math.hypot(e.clientX-meb.x, e.clientY-meb.y) <= meb.r) { menuOpen = false; return; }
       handleMenuClick(e.clientX, e.clientY);
@@ -1005,6 +1011,10 @@
   function modeButton()      { ensureHudCache(); return hudCache.mode; }
   function menuButton()      { ensureHudCache(); return hudCache.menu; }
   function resetButton()     { ensureHudCache(); return hudCache.reset; }
+  function mapButton()       { ensureHudCache(); return hudCache.map; }
+  function mapOptionRects() { const vp=getViewport(), w=Math.min(220,vp.w-32), h=52, x=(vp.w-w)/2, y=(vp.h-2*h-16)/2; return [{x,y,w,h,name:'Baseplate'},{x,y:y+h+16,w,h,name:'Test run'}]; }
+  function selectMap(name) { currentMap=name; mapOptionsOpen=false; resetAll(); }
+  function handleMapOption(x,y) { for (const r of mapOptionRects()) if(pointInRect(x,y,r)){selectMap(r.name);return true;} mapOptionsOpen=false; return true; }
   function getMenuLayout() {
     const vp = getViewport();
     const M = 16;                                  // outer margin from screen edges
@@ -1442,7 +1452,10 @@
     const sb = skillButton();
     const meb = menuButton();
     const rsb = resetButton();
+    const mpb = mapButton();
     for (const t of e.changedTouches) {
+      if (mapOptionsOpen) { handleMapOption(t.clientX,t.clientY); e.preventDefault(); continue; }
+      if (Math.hypot(t.clientX-mpb.x,t.clientY-mpb.y)<=mpb.r) { mapOptionsOpen=true; e.preventDefault(); continue; }
       if (infoOpen) { infoPointerDown(t.identifier, t.clientX, t.clientY); e.preventDefault(); continue; }
       if (menuOpen) { handleMenuClick(t.clientX, t.clientY); e.preventDefault(); continue; }
       if (Math.hypot(t.clientX-mb.x, t.clientY-mb.y) <= mb.r) { toggleMode(); e.preventDefault(); continue; }
@@ -2804,6 +2817,18 @@
     player.x = clamp(player.x, map.x+player.r, map.x+map.w-player.r);
     player.y = clamp(player.y, map.y+player.r, map.y+map.h-player.r);
 
+    // Test run is a live chase in either role: the survivor flees as killer, while the killer pursues as survivor.
+    if (currentMap === 'Test run' && !dummy.dead && dummy.stunT <= 0) {
+      const targetX = mode === 'killer' ? dummy.x - player.x : player.x - dummy.x;
+      const targetY = mode === 'killer' ? dummy.y - player.y : player.y - dummy.y;
+      const distance = Math.hypot(targetX,targetY) || 1;
+      const speed = mode === 'killer' ? 82 : 105;
+      const desiredX=targetX/distance*speed, desiredY=targetY/distance*speed;
+      const blend=1-Math.exp(-3*ddt);
+      dummy.vx+=(desiredX-dummy.vx)*blend; dummy.vy+=(desiredY-dummy.vy)*blend;
+      dummy.x=clamp(dummy.x+dummy.vx*ddt,map.x+dummy.r,map.x+map.w-dummy.r);
+      dummy.y=clamp(dummy.y+dummy.vy*ddt,map.y+dummy.r,map.y+map.h-dummy.r);
+    }
     // dummy faces the player (for aiming the killer / X orientation)
     dummy.face = Math.atan2(player.y-dummy.y, player.x-dummy.x);
 
@@ -5554,6 +5579,21 @@
     ctx.restore();
     ctx.restore();   // press-dip scope
     ctx.restore();   // clip scope
+
+    // Map options button, following the top-left controls.
+    const mpb=mapButton();
+    ctx.fillStyle=mapOptionsOpen?'rgba(255,190,80,0.95)':'rgba(65,145,135,0.92)';
+    roundRect(mpb.x-mpb.r,mpb.y-mpb.r,mpb.r*2,mpb.r*2,6); ctx.fill();
+    ctx.strokeStyle='rgba(255,255,255,0.4)'; ctx.lineWidth=2; roundRect(mpb.x-mpb.r,mpb.y-mpb.r,mpb.r*2,mpb.r*2,6); ctx.stroke();
+    ctx.fillStyle='#fff'; ctx.font=`bold ${Math.round(10*uiScale())}px system-ui,sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('MAP',mpb.x,mpb.y);
+    if(mapOptionsOpen){
+      ctx.save(); ctx.fillStyle='rgba(0,0,0,0.58)'; ctx.fillRect(0,0,vp.w,vp.h);
+      const opts=mapOptionRects(), panel={x:opts[0].x-14,y:opts[0].y-58,w:opts[0].w+28,h:opts[1].y+opts[1].h-opts[0].y+72};
+      ctx.fillStyle='rgba(25,30,40,0.98)'; roundRect(panel.x,panel.y,panel.w,panel.h,14); ctx.fill();
+      ctx.fillStyle='#fff'; ctx.font='bold 20px system-ui,sans-serif'; ctx.textAlign='center'; ctx.fillText('SELECT MAP',vp.w/2,panel.y+30);
+      for(const r of opts){ctx.fillStyle=currentMap===r.name?'rgba(45,150,125,0.95)':'rgba(70,78,94,0.95)'; roundRect(r.x,r.y,r.w,r.h,9);ctx.fill();ctx.fillStyle='#fff';ctx.font='bold 17px system-ui,sans-serif';ctx.fillText(r.name,r.x+r.w/2,r.y+r.h/2);}
+      ctx.restore();
+    }
 
     // mode toggle button (top-left)
     const mb=modeButton();

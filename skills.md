@@ -10,6 +10,8 @@ Checks always checks.
 
 Must avoid:
 
+double vercel commands that take too long.
+
 UNNECCESSERY THINKING(best is not think at all)
 
 UNNECCESSERY COMMANDS
