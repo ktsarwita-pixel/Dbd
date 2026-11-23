@@ -674,7 +674,7 @@
   let menuOpen = false;
   let mapOptionsOpen = false;
   let currentMap = 'Baseplate';
-  const chaseAI = { x:0, y:0, think:0, phase:0 };
+  const chaseAI = { x:0, y:0, think:0, phase:0, heading:0 };
   const killerAI = { charge:0, chargeGoal:0, aim:0, lungeSpeed:ATTACK.lungeSpeedBase };
   let infoOpen = false;       // shows the pre-game notice message
   let infoAnim = 0;           // 0..1 animated open state of the info overlay
@@ -768,7 +768,7 @@
     dummy.vx=0; dummy.vy=0; dummy.spin=0; dummy.spinVel=0; dummy.flash=0; dummy.stunT=0;
     dummy.swinging=false; dummy.swingT=0; dummy.swingHitDone=false; dummy.swingCD=1.0;
     dummy.x = map.x + dummy.fx*map.w; dummy.y = map.y + dummy.fy*map.h;
-    chaseAI.x=0; chaseAI.y=0; chaseAI.think=0; chaseAI.phase=0;
+    chaseAI.x=0; chaseAI.y=0; chaseAI.think=0; chaseAI.phase=0; chaseAI.heading=0;
     killerAI.charge=0; killerAI.chargeGoal=0; killerAI.aim=0; killerAI.lungeSpeed=ATTACK.lungeSpeedBase;
     attack.active=false; attack.timer=0; attack.hitDone=false; attack.overcharged=false; attack.bursted=false; attack.combo=false;
     attack.hardStab=false;
@@ -2827,9 +2827,9 @@
       chaseAI.think -= ddt;
       const dx=player.x-dummy.x, dy=player.y-dummy.y, distance=Math.hypot(dx,dy)||1;
       if (chaseAI.think<=0) {
-        chaseAI.think=0.16; chaseAI.phase+=1;
+        chaseAI.think=0.10; chaseAI.phase+=1;
         const flee=mode==='killer';
-        const horizon=flee?0.72:0.42;
+        const horizon=flee?0.82:0.52;
         // Extrapolate short and long pursuit paths, clamping forecasts to the arena so a
         // boundary stop is not mistaken for continued full-speed travel through the wall.
         const forecast=(t)=>({x:clamp(player.x+player.vx*t,map.x+player.r,map.x+map.w-player.r),y:clamp(player.y+player.vy*t,map.y+player.r,map.y+map.h-player.r)});
@@ -2838,10 +2838,11 @@
         const threatVX=player.vx, threatVY=player.vy;
         const base=Math.atan2(flee ? -dy : py-dummy.y, flee ? -dx : px-dummy.x);
         let best=-Infinity, bestA=base;
-        // Test candidate headings against predicted separation and edge danger.
-        for(let i=0;i<24;i++){
-          const a=i*Math.PI*2/24;
-          const speed=flee?190:184;
+        const speed=flee?242:278;
+        const currentHeading=Math.hypot(dummy.vx,dummy.vy)>18?Math.atan2(dummy.vy,dummy.vx):chaseAI.heading;
+        // Score a dense fan of candidate routes against two future positions; turn-cost stabilizes steering.
+        for(let i=0;i<32;i++){
+          const a=i*Math.PI*2/32;
           const tx=dummy.x+Math.cos(a)*speed*horizon, ty=dummy.y+Math.sin(a)*speed*horizon;
           const left=tx-map.x, right=map.x+map.w-tx, top=ty-map.y, bottom=map.y+map.h-ty;
           const edge=Math.min(left,right,top,bottom);
@@ -2856,34 +2857,40 @@
               const kd=Math.hypot(tx-kx,ty-ky); if(kd<dummy.r+THROW.radius+42) hazardPenalty+=(dummy.r+THROW.radius+42-kd)*2.8;
             }
           }
-          const sep=sepNear*0.42+sepFar*0.58;
+          const sep=sepNear*0.58+sepFar*0.42;
           const heading=Math.cos(a-base);
-          const inertia=Math.cos(a-Math.atan2(dummy.vy,dummy.vx));
+          const inertia=Math.cos(a-currentHeading);
+          let turnDelta=Math.atan2(Math.sin(a-currentHeading),Math.cos(a-currentHeading));
           // Strong smooth repulsion from every border; corner positions pay two penalties at once.
           const wallRisk=260/(Math.max(8,left)+24)+260/(Math.max(8,right)+24)+260/(Math.max(8,top)+24)+260/(Math.max(8,bottom)+24);
-          let score=flee ? sep*1.25 - wallRisk*190 + heading*10 + inertia*5 - hazardPenalty
-                         : -sep*1.3 - wallRisk*115 + heading*20 + inertia*4 - hazardPenalty;
-          // Predict the pursuer's approach and favor a safe lateral cut when it is close, not a predictable straight-line retreat.
-          if(flee && distance<210) {
-            const futurePX=player.x+threatVX*0.34, futurePY=player.y+threatVY*0.34;
+          let score=flee ? sep*1.55 - wallRisk*220 + heading*3 + inertia*12 - hazardPenalty
+                         : -sep*1.55 - wallRisk*90 + heading*4 + inertia*10 - hazardPenalty;
+          // Favor outward escape most of the time; only hard-dodge across the attack line when a swing/charge is imminent.
+          if(flee && distance<210 && (charging || attack.active)) {
+            const futurePX=clamp(player.x+threatVX*0.34,map.x+player.r,map.x+map.w-player.r);
+            const futurePY=clamp(player.y+threatVY*0.34,map.y+player.r,map.y+map.h-player.r);
             const approach=Math.atan2(futurePY-dummy.y,futurePX-dummy.x);
             const lateral=Math.abs(Math.sin(a-approach));
-            score += lateral*Math.max(0,210-distance)*0.38;
-            if(distance<105 && edge>dummy.r+18) score += lateral*22;
+            score += lateral*Math.max(0,210-distance)*0.55;
+            if(distance<105 && edge>dummy.r+18) score += lateral*28;
             // If the killer is charging or already swinging, actively evade the weapon line.
             if(distance<230 && (charging || attack.active)) {
               const weaponLine=player.angle;
               const sideStep=Math.abs(Math.sin(a-weaponLine));
               const predictedGap=Math.hypot(tx-(player.x+player.vx*0.24),ty-(player.y+player.vy*0.24));
-              score += sideStep*Math.max(0,230-distance)*0.75 + Math.min(predictedGap,180)*0.12;
+              const weaponReach=BOX.fwd+BOX.halfLen+player.r+22;
+              const linePenalty=predictedGap<weaponReach ? (weaponReach-predictedGap)*3.2 : 0;
+              score += sideStep*Math.max(0,230-distance)*0.95 - linePenalty;
             }
           }
+          score-=Math.abs(turnDelta)*(flee?8:5);
           if(score>best){best=score;bestA=a;}
         }
-        chaseAI.x=Math.cos(bestA)*(flee?190:184); chaseAI.y=Math.sin(bestA)*(flee?190:184);
+        chaseAI.heading=bestA;
+        chaseAI.x=Math.cos(bestA)*speed; chaseAI.y=Math.sin(bestA)*speed;
       }
       if(!(mode==='survivor' && (dummy.swinging || killerAI.chargeGoal>0))){
-        const blend=1-Math.exp(-5.5*ddt);
+        const blend=1-Math.exp(-9*ddt);
         dummy.vx+=(chaseAI.x-dummy.vx)*blend; dummy.vy+=(chaseAI.y-dummy.vy)*blend;
         dummy.x=clamp(dummy.x+dummy.vx*ddt,map.x+dummy.r,map.x+map.w-dummy.r);
         dummy.y=clamp(dummy.y+dummy.vy*ddt,map.y+dummy.r,map.y+map.h-dummy.r);
