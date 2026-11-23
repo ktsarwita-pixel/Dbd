@@ -674,7 +674,7 @@
   let menuOpen = false;
   let mapOptionsOpen = false;
   let currentMap = 'Baseplate';
-  const chaseAI = { x:0, y:0, think:0, phase:0, heading:0 };
+  const chaseAI = { x:0, y:0, think:0, phase:0, heading:0, stuckT:0, lastX:0, lastY:0, escapeT:0 };
   const killerAI = { charge:0, chargeGoal:0, aim:0, lungeSpeed:ATTACK.lungeSpeedBase };
   function maxLungeGap() { return Math.min(72, ATTACK.lungeSpeedExtra*ATTACK.lungeTime*0.68); }
   let infoOpen = false;       // shows the pre-game notice message
@@ -769,7 +769,7 @@
     dummy.vx=0; dummy.vy=0; dummy.spin=0; dummy.spinVel=0; dummy.flash=0; dummy.stunT=0;
     dummy.swinging=false; dummy.swingT=0; dummy.swingHitDone=false; dummy.swingCD=1.0;
     dummy.x = map.x + dummy.fx*map.w; dummy.y = map.y + dummy.fy*map.h;
-    chaseAI.x=0; chaseAI.y=0; chaseAI.think=0; chaseAI.phase=0; chaseAI.heading=0;
+    chaseAI.x=0; chaseAI.y=0; chaseAI.think=0; chaseAI.phase=0; chaseAI.heading=0; chaseAI.stuckT=0; chaseAI.lastX=dummy.x; chaseAI.lastY=dummy.y; chaseAI.escapeT=0;
     killerAI.charge=0; killerAI.chargeGoal=0; killerAI.aim=0; killerAI.lungeSpeed=ATTACK.lungeSpeedBase;
     attack.active=false; attack.timer=0; attack.hitDone=false; attack.overcharged=false; attack.bursted=false; attack.combo=false;
     attack.hardStab=false;
@@ -2827,6 +2827,13 @@
     if (currentMap === 'Test run' && !dummy.dead && dummy.stunT <= 0) {
       const dx=player.x-dummy.x, dy=player.y-dummy.y, distance=Math.hypot(dx,dy)||1;
       const urgentThreat=mode==='killer' && (charging || attack.active || knife.state==='out' || knife.state==='return');
+      const movedSinceThink=Math.hypot(dummy.x-chaseAI.lastX,dummy.y-chaseAI.lastY);
+      if(chaseAI.think<=ddt){
+        chaseAI.stuckT=movedSinceThink<Math.max(2,185*0.16*0.18)?chaseAI.stuckT+0.16:Math.max(0,chaseAI.stuckT-0.32);
+        chaseAI.lastX=dummy.x; chaseAI.lastY=dummy.y;
+        if(chaseAI.stuckT>=0.48){chaseAI.escapeT=0.9;chaseAI.stuckT=0;chaseAI.phase+=7;}
+      }
+      chaseAI.escapeT=Math.max(0,chaseAI.escapeT-ddt);
       chaseAI.think=urgentThreat?0:chaseAI.think-ddt;
       if (chaseAI.think<=0) {
         chaseAI.think=urgentThreat?0.11:0.16; chaseAI.phase+=1;
@@ -2900,6 +2907,15 @@
               +continuityScore*0.09+intentScore*0.04+dodgeScore*(imminent?0.18:0.05)+genScore*0.08
             : interceptScore*0.45+edgeScore*0.16+hazardScore*0.06+continuityScore*0.16+intentScore*0.07+genScore*0.10;
           score-=genPenalty*1.5;
+          // If movement repeatedly fails, prioritize clear space away from nearby boundaries
+          // and obstacles for a short recovery window instead of repeating the blocked route.
+          if(chaseAI.escapeT>0){
+            const escapeX=(dummy.x-map.x)-(map.x+map.w-dummy.x), escapeY=(dummy.y-map.y)-(map.y+map.h-dummy.y);
+            const escapeA=Math.atan2(escapeY,escapeX);
+            const openX=dummy.x+Math.cos(a)*90, openY=dummy.y+Math.sin(a)*90;
+            const openGap=Math.hypot(openX-gen.x,openY-gen.y)-(gen.r+dummy.r);
+            score+=Math.cos(a-escapeA)*0.24+clamp(openGap/90,0,1)*0.18;
+          }
           // Bounded hysteresis stabilizes close alternatives without swamping the route scores.
           score+=Math.cos(a-currentHeading)*0.08-Math.abs(turnDelta)/Math.PI*0.06;
           if(score>best){best=score;bestA=a;}
