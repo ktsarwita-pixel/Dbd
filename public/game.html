@@ -2912,9 +2912,11 @@
           // from dominating. Weights adapt to role and imminent danger.
           const imminent=flee && distance<210 && (charging || attack.active);
           let score=flee
-            ? escapeScore*(imminent?0.29:0.39)+edgeScore*(imminent?0.18:0.20)+hazardScore*0.14
-              +continuityScore*0.09+intentScore*0.04+dodgeScore*(imminent?0.18:0.05)+genScore*0.08
-              -cornerPenalty*(distance>300?0.42:0.24)
+            ? imminent
+              ? escapeScore*0.29+edgeScore*0.18+hazardScore*0.14+continuityScore*0.09
+                +intentScore*0.04+dodgeScore*0.18+genScore*0.08-cornerPenalty*0.24
+              : escapeScore*0.60+edgeScore*0.14+hazardScore*0.11+continuityScore*0.02
+                +intentScore*0.02+dodgeScore*0.05+genScore*0.05-cornerPenalty*0.55
             : interceptScore*0.36+progressScore*0.20-overshootPenalty*0.08
               +edgeScore*0.14+hazardScore*0.05+continuityScore*0.12+intentScore*0.07+genScore*0.06;
           score-=genPenalty*1.5;
