@@ -675,6 +675,7 @@
   let mapOptionsOpen = false;
   let currentMap = 'Baseplate';
   const chaseAI = { x:0, y:0, think:0, phase:0 };
+  const killerAI = { charge:0, chargeGoal:0, aim:0, lungeSpeed:ATTACK.lungeSpeedBase };
   let infoOpen = false;       // shows the pre-game notice message
   let infoAnim = 0;           // 0..1 animated open state of the info overlay
   // Info overlay pages: 'notice' (landing) -> 'ainfo' (mechanics) or 'updates' (changelog).
@@ -768,6 +769,7 @@
     dummy.swinging=false; dummy.swingT=0; dummy.swingHitDone=false; dummy.swingCD=1.0;
     dummy.x = map.x + dummy.fx*map.w; dummy.y = map.y + dummy.fy*map.h;
     chaseAI.x=0; chaseAI.y=0; chaseAI.think=0; chaseAI.phase=0;
+    killerAI.charge=0; killerAI.chargeGoal=0; killerAI.aim=0; killerAI.lungeSpeed=ATTACK.lungeSpeedBase;
     attack.active=false; attack.timer=0; attack.hitDone=false; attack.overcharged=false; attack.bursted=false; attack.combo=false;
     attack.hardStab=false;
     hardStabHits=0; hardStabReady=false; hardStabArmFX=0; hardStabAnim=0; hardStabGlow=0; hardStabFireFX=0;
@@ -2858,10 +2860,12 @@
         }
         chaseAI.x=Math.cos(bestA)*(flee?190:184); chaseAI.y=Math.sin(bestA)*(flee?190:184);
       }
-      const blend=1-Math.exp(-5.5*ddt);
-      dummy.vx+=(chaseAI.x-dummy.vx)*blend; dummy.vy+=(chaseAI.y-dummy.vy)*blend;
-      dummy.x=clamp(dummy.x+dummy.vx*ddt,map.x+dummy.r,map.x+map.w-dummy.r);
-      dummy.y=clamp(dummy.y+dummy.vy*ddt,map.y+dummy.r,map.y+map.h-dummy.r);
+      if(!(mode==='survivor' && (dummy.swinging || killerAI.chargeGoal>0))){
+        const blend=1-Math.exp(-5.5*ddt);
+        dummy.vx+=(chaseAI.x-dummy.vx)*blend; dummy.vy+=(chaseAI.y-dummy.vy)*blend;
+        dummy.x=clamp(dummy.x+dummy.vx*ddt,map.x+dummy.r,map.x+map.w-dummy.r);
+        dummy.y=clamp(dummy.y+dummy.vy*ddt,map.y+dummy.r,map.y+map.h-dummy.r);
+      }
     }
     // dummy faces the player (for aiming the killer / X orientation)
     dummy.face = Math.atan2(player.y-dummy.y, player.x-dummy.x);
@@ -2948,12 +2952,37 @@
       if (dummy.stunT > 0) {
         dummy.swinging=false; dummy.swingT=0; dummy.swingHitDone=true;
       } else if (dummy.swinging) {
+        if(currentMap==='Test run' && dummy.swingT<ATTACK.lungeTime){
+          dummy.face=killerAI.aim;
+          const step=Math.min(ddt,ATTACK.lungeTime-dummy.swingT);
+          dummy.x=clamp(dummy.x+Math.cos(killerAI.aim)*killerAI.lungeSpeed*step,map.x+dummy.r,map.x+map.w-dummy.r);
+          dummy.y=clamp(dummy.y+Math.sin(killerAI.aim)*killerAI.lungeSpeed*step,map.y+dummy.r,map.y+map.h-dummy.r);
+        }
         dummy.swingT += ddt;
         if (dummy.swingT >= ATTACK.duration) { dummy.swinging=false; dummy.swingT=0; }
       } else {
         dummy.swingCD -= ddt;
-        const attackRange=BOX.fwd+BOX.halfLen+player.r+18;
-        if (dummy.swingCD <= 0 && Math.hypot(player.x-dummy.x,player.y-dummy.y)<=attackRange) { dummy.swinging=true; dummy.swingT=0; dummy.swingHitDone=false; dummy.swingCD=KILLER_CD; }
+        const dx=player.x-dummy.x, dy=player.y-dummy.y, dist=Math.hypot(dx,dy)||1;
+        const meleeRange=BOX.fwd+BOX.halfLen+player.r+8;
+        const maxTravel=ATTACK.lungeSpeedBase*ATTACK.lungeTime + ATTACK.lungeSpeedExtra*ATTACK.lungeTime;
+        const canCharge=currentMap==='Test run' && dummy.swingCD<=0 && dist<meleeRange+maxTravel;
+        if(canCharge){
+          // Size charge to the distance deficit: close hits use a quick tap; longer gaps use the
+          // lunge bar proportionally. Aim at the survivor's predicted position at impact time.
+          const lead=clamp(dist/360,0.10,0.42);
+          const aimX=player.x+player.vx*lead-dummy.x, aimY=player.y+player.vy*lead-dummy.y;
+          killerAI.aim=Math.atan2(aimY,aimX);
+          const deficit=Math.max(0,dist-meleeRange);
+          killerAI.chargeGoal=clamp(deficit/maxTravel,0.08,1);
+          killerAI.charge=Math.min(killerAI.chargeGoal,killerAI.charge+ddt/CHARGE_TIME);
+          dummy.face=killerAI.aim;
+          if(killerAI.charge>=killerAI.chargeGoal){
+            dummy.swinging=true; dummy.swingT=0; dummy.swingHitDone=false; dummy.swingCD=KILLER_CD;
+            killerAI.lungeSpeed=ATTACK.lungeSpeedBase+killerAI.charge*ATTACK.lungeSpeedExtra;
+            killerAI.charge=0; killerAI.chargeGoal=0;
+          }
+        } else if(currentMap==='Test run') { killerAI.charge=0; killerAI.chargeGoal=0; }
+        else if(dummy.swingCD<=0 && dist<=meleeRange) { dummy.swinging=true; dummy.swingT=0; dummy.swingHitDone=false; dummy.swingCD=KILLER_CD; killerAI.lungeSpeed=ATTACK.lungeSpeedBase; killerAI.aim=Math.atan2(dy,dx); }
       }
       if (dummy.swinging && !dummy.swingHitDone &&
           dummy.swingT >= ATTACK.hitStart*ATTACK.duration &&
@@ -5268,6 +5297,10 @@
       if (charging){
         ctx.strokeStyle='#fff'; ctx.lineWidth=4*sc;
         ctx.beginPath(); ctx.arc(btn.x, btn.y, btn.r-7*sc, -Math.PI/2, -Math.PI/2 + charge*Math.PI*2); ctx.stroke();
+      } else if(mode==='survivor' && currentMap==='Test run' && killerAI.chargeGoal>0){
+        const k=clamp(killerAI.charge/killerAI.chargeGoal,0,1);
+        ctx.strokeStyle='#ffb45e'; ctx.lineWidth=4*sc;
+        ctx.beginPath(); ctx.arc(btn.x,btn.y,btn.r-7*sc,-Math.PI/2,-Math.PI/2+k*Math.PI*2); ctx.stroke();
       }
       if (attack.active){   // M1 cooldown ring
         const total = ATTACK.duration + attackRecoverTime(attack);
