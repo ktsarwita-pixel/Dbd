@@ -2824,10 +2824,11 @@
     // Test run AI: periodically scores many short routes, predicts the player's motion,
     // avoids pinning itself to map edges, and varies its dodge so it doesn't run in a straight line.
     if (currentMap === 'Test run' && !dummy.dead && dummy.stunT <= 0) {
-      chaseAI.think -= ddt;
       const dx=player.x-dummy.x, dy=player.y-dummy.y, distance=Math.hypot(dx,dy)||1;
+      const urgentThreat=mode==='killer' && (charging || attack.active || knife.state==='out' || knife.state==='return');
+      chaseAI.think=urgentThreat?0:chaseAI.think-ddt;
       if (chaseAI.think<=0) {
-        chaseAI.think=0.10; chaseAI.phase+=1;
+        chaseAI.think=urgentThreat?0.025:0.075; chaseAI.phase+=1;
         const flee=mode==='killer';
         const horizon=flee?0.82:0.52;
         // Extrapolate short and long pursuit paths, clamping forecasts to the arena so a
@@ -2838,7 +2839,7 @@
         const threatVX=player.vx, threatVY=player.vy;
         const base=Math.atan2(flee ? -dy : py-dummy.y, flee ? -dx : px-dummy.x);
         let best=-Infinity, bestA=base;
-        const speed=flee?242:278;
+        const speed=flee?216:250;
         const currentHeading=Math.hypot(dummy.vx,dummy.vy)>18?Math.atan2(dummy.vy,dummy.vx):chaseAI.heading;
         // Score a dense fan of candidate routes against two future positions; turn-cost stabilizes steering.
         for(let i=0;i<32;i++){
@@ -2890,10 +2891,22 @@
         chaseAI.x=Math.cos(bestA)*speed; chaseAI.y=Math.sin(bestA)*speed;
       }
       if(!(mode==='survivor' && (dummy.swinging || killerAI.chargeGoal>0))){
-        const blend=1-Math.exp(-9*ddt);
-        dummy.vx+=(chaseAI.x-dummy.vx)*blend; dummy.vy+=(chaseAI.y-dummy.vy)*blend;
-        dummy.x=clamp(dummy.x+dummy.vx*ddt,map.x+dummy.r,map.x+map.w-dummy.r);
-        dummy.y=clamp(dummy.y+dummy.vy*ddt,map.y+dummy.r,map.y+map.h-dummy.r);
+        const threat=mode==='killer' && (charging || attack.active || knife.state==='out' || knife.state==='return');
+        const desiredAngle=Math.atan2(chaseAI.y,chaseAI.x);
+        const speed=Math.hypot(chaseAI.x,chaseAI.y);
+        const curSpeed=Math.hypot(dummy.vx,dummy.vy);
+        const curAngle=curSpeed>8?Math.atan2(dummy.vy,dummy.vx):desiredAngle;
+        let turn=Math.atan2(Math.sin(desiredAngle-curAngle),Math.cos(desiredAngle-curAngle));
+        turn=clamp(turn,-(threat?10:5.5)*ddt,(threat?10:5.5)*ddt);
+        const nextAngle=curAngle+turn;
+        const accel=1-Math.exp(-(threat?13:5.5)*ddt);
+        const nextSpeed=curSpeed+(speed-curSpeed)*accel;
+        dummy.vx=Math.cos(nextAngle)*nextSpeed; dummy.vy=Math.sin(nextAngle)*nextSpeed;
+        const nx=clamp(dummy.x+dummy.vx*ddt,map.x+dummy.r,map.x+map.w-dummy.r);
+        const ny=clamp(dummy.y+dummy.vy*ddt,map.y+dummy.r,map.y+map.h-dummy.r);
+        // Remove blocked velocity components at map edges instead of accumulating wall jitter.
+        if(nx===dummy.x) dummy.vx=0; if(ny===dummy.y) dummy.vy=0;
+        dummy.x=nx; dummy.y=ny;
       }
     }
     // dummy faces the player (for aiming the killer / X orientation)
