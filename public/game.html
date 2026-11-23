@@ -2849,6 +2849,8 @@
         let best=-Infinity, bestA=base, incumbent=-Infinity;
         const speed=flee?185:205;
         const currentHeading=chaseAI.phase>1?chaseAI.heading:base;
+        const currentEdge=Math.min(dummy.x-map.x,map.x+map.w-dummy.x,dummy.y-map.y,map.y+map.h-dummy.y);
+        const wallRecoveryWeight=flee?clamp((130-currentEdge)/100,0,1)*(distance<260?0.15:0.08):0;
         const motionSpeed=Math.hypot(dummy.vx,dummy.vy);
         const motionHeading=motionSpeed>12?Math.atan2(dummy.vy,dummy.vx):currentHeading;
         // Receding-horizon route planner (MPC): independent progress, spacing, hazard, wall,
@@ -2921,6 +2923,9 @@
                 +intentScore*0.02+dodgeScore*0.05+genScore*0.05-cornerPenalty*0.55
             : interceptScore*0.36+progressScore*0.20-overshootPenalty*0.08
               +edgeScore*0.14+hazardScore*0.05+continuityScore*0.12+intentScore*0.07+genScore*0.06;
+          // A survivor pressed against a wall needs an inward escape lane, even if the
+          // immediate flee vector points along the wall toward another dead end.
+          if(wallRecoveryWeight>0) score+=wallRecoveryWeight*clamp((edge-currentEdge)/90,-1,1);
           score-=genPenalty*1.5;
           // If movement repeatedly fails, prioritize clear space away from nearby boundaries
           // and obstacles for a short recovery window instead of repeating the blocked route.
