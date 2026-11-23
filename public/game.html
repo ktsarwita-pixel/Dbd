@@ -2829,8 +2829,12 @@
       if (chaseAI.think<=0) {
         chaseAI.think=0.16; chaseAI.phase+=1;
         const flee=mode==='killer';
-        const horizon=flee?0.72:0.38;
-        const px=player.x+player.vx*horizon, py=player.y+player.vy*horizon;
+        const horizon=flee?0.72:0.42;
+        // Extrapolate short and long pursuit paths, clamping forecasts to the arena so a
+        // boundary stop is not mistaken for continued full-speed travel through the wall.
+        const forecast=(t)=>({x:clamp(player.x+player.vx*t,map.x+player.r,map.x+map.w-player.r),y:clamp(player.y+player.vy*t,map.y+player.r,map.y+map.h-player.r)});
+        const pNear=forecast(0.32), pFar=forecast(horizon);
+        const px=pFar.x, py=pFar.y;
         const threatVX=player.vx, threatVY=player.vy;
         const base=Math.atan2(flee ? -dy : py-dummy.y, flee ? -dx : px-dummy.x);
         let best=-Infinity, bestA=base;
@@ -2841,7 +2845,10 @@
           const tx=dummy.x+Math.cos(a)*speed*horizon, ty=dummy.y+Math.sin(a)*speed*horizon;
           const left=tx-map.x, right=map.x+map.w-tx, top=ty-map.y, bottom=map.y+map.h-ty;
           const edge=Math.min(left,right,top,bottom);
-          const sep=Math.hypot(tx-px,ty-py);
+          const tNearX=dummy.x+Math.cos(a)*speed*0.32, tNearY=dummy.y+Math.sin(a)*speed*0.32;
+          const sepNear=Math.hypot(tNearX-pNear.x,tNearY-pNear.y);
+          const sepFar=Math.hypot(tx-px,ty-py);
+          const sep=sepNear*0.42+sepFar*0.58;
           const heading=Math.cos(a-base);
           const inertia=Math.cos(a-Math.atan2(dummy.vy,dummy.vx));
           // Strong smooth repulsion from every border; corner positions pay two penalties at once.
@@ -2855,6 +2862,13 @@
             const lateral=Math.abs(Math.sin(a-approach));
             score += lateral*Math.max(0,210-distance)*0.38;
             if(distance<105 && edge>dummy.r+18) score += lateral*22;
+            // If the killer is charging or already swinging, actively evade the weapon line.
+            if(distance<230 && (charging || attack.active)) {
+              const weaponLine=player.angle;
+              const sideStep=Math.abs(Math.sin(a-weaponLine));
+              const predictedGap=Math.hypot(tx-(player.x+player.vx*0.24),ty-(player.y+player.vy*0.24));
+              score += sideStep*Math.max(0,230-distance)*0.75 + Math.min(predictedGap,180)*0.12;
+            }
           }
           if(score>best){best=score;bestA=a;}
         }
@@ -2969,8 +2983,10 @@
         if(canCharge){
           // Size charge to the distance deficit: close hits use a quick tap; longer gaps use the
           // lunge bar proportionally. Aim at the survivor's predicted position at impact time.
-          const lead=clamp(dist/360,0.10,0.42);
-          const aimX=player.x+player.vx*lead-dummy.x, aimY=player.y+player.vy*lead-dummy.y;
+          const lead=clamp(dist/(ATTACK.lungeSpeedBase+90),0.12,0.55);
+          const predictedX=clamp(player.x+player.vx*lead,map.x+player.r,map.x+map.w-player.r);
+          const predictedY=clamp(player.y+player.vy*lead,map.y+player.r,map.y+map.h-player.r);
+          const aimX=predictedX-dummy.x, aimY=predictedY-dummy.y;
           killerAI.aim=Math.atan2(aimY,aimX);
           const deficit=Math.max(0,dist-meleeRange);
           killerAI.chargeGoal=clamp(deficit/maxTravel,0.08,1);
