@@ -2894,13 +2894,16 @@
         const threat=mode==='killer' && (charging || attack.active || knife.state==='out' || knife.state==='return');
         const desiredAngle=Math.atan2(chaseAI.y,chaseAI.x);
         const speed=Math.hypot(chaseAI.x,chaseAI.y);
-        const curSpeed=Math.hypot(dummy.vx,dummy.vy);
+        let curSpeed=Math.hypot(dummy.vx,dummy.vy);
+        // Combat knockback can leave a large residual velocity; discard its excess before
+        // steering so chase/flee speed cannot inherit a temporary impulse indefinitely.
+        if(curSpeed>speed){ const scale=speed/curSpeed; dummy.vx*=scale; dummy.vy*=scale; curSpeed=speed; }
         const curAngle=curSpeed>8?Math.atan2(dummy.vy,dummy.vx):desiredAngle;
         let turn=Math.atan2(Math.sin(desiredAngle-curAngle),Math.cos(desiredAngle-curAngle));
         turn=clamp(turn,-(threat?10:5.5)*ddt,(threat?10:5.5)*ddt);
         const nextAngle=curAngle+turn;
         const accel=1-Math.exp(-(threat?13:5.5)*ddt);
-        const nextSpeed=curSpeed+(speed-curSpeed)*accel;
+        const nextSpeed=clamp(curSpeed+(speed-curSpeed)*accel,0,speed);
         dummy.vx=Math.cos(nextAngle)*nextSpeed; dummy.vy=Math.sin(nextAngle)*nextSpeed;
         const nx=clamp(dummy.x+dummy.vx*ddt,map.x+dummy.r,map.x+map.w-dummy.r);
         const ny=clamp(dummy.y+dummy.vy*ddt,map.y+dummy.r,map.y+map.h-dummy.r);
