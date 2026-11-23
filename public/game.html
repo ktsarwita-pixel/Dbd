@@ -2848,13 +2848,21 @@
           const tNearX=dummy.x+Math.cos(a)*speed*0.32, tNearY=dummy.y+Math.sin(a)*speed*0.32;
           const sepNear=Math.hypot(tNearX-pNear.x,tNearY-pNear.y);
           const sepFar=Math.hypot(tx-px,ty-py);
+          let hazardPenalty=0;
+          if(flee){
+            for(const trap of ghostTraps){ if(!trap.armed || trap.holding) continue; const td=Math.hypot(tx-trap.x,ty-trap.y); if(td<GHOST.radius+dummy.r+38) hazardPenalty+=((GHOST.radius+dummy.r+38-td)/10)*22; }
+            if(knife.state==='out' || knife.state==='return'){
+              const kx=knife.x+knife.vx*horizon, ky=knife.y+knife.vy*horizon;
+              const kd=Math.hypot(tx-kx,ty-ky); if(kd<dummy.r+THROW.radius+42) hazardPenalty+=(dummy.r+THROW.radius+42-kd)*2.8;
+            }
+          }
           const sep=sepNear*0.42+sepFar*0.58;
           const heading=Math.cos(a-base);
           const inertia=Math.cos(a-Math.atan2(dummy.vy,dummy.vx));
           // Strong smooth repulsion from every border; corner positions pay two penalties at once.
           const wallRisk=260/(Math.max(8,left)+24)+260/(Math.max(8,right)+24)+260/(Math.max(8,top)+24)+260/(Math.max(8,bottom)+24);
-          let score=flee ? sep*1.25 - wallRisk*190 + heading*10 + inertia*5
-                         : -sep*1.3 - wallRisk*115 + heading*20 + inertia*4;
+          let score=flee ? sep*1.25 - wallRisk*190 + heading*10 + inertia*5 - hazardPenalty
+                         : -sep*1.3 - wallRisk*115 + heading*20 + inertia*4 - hazardPenalty;
           // Predict the pursuer's approach and favor a safe lateral cut when it is close, not a predictable straight-line retreat.
           if(flee && distance<210) {
             const futurePX=player.x+threatVX*0.34, futurePY=player.y+threatVY*0.34;
@@ -2979,17 +2987,21 @@
         const dx=player.x-dummy.x, dy=player.y-dummy.y, dist=Math.hypot(dx,dy)||1;
         const meleeRange=BOX.fwd+BOX.halfLen+player.r+8;
         const maxTravel=ATTACK.lungeSpeedBase*ATTACK.lungeTime + ATTACK.lungeSpeedExtra*ATTACK.lungeTime;
-        const canCharge=currentMap==='Test run' && dummy.swingCD<=0 && dist<meleeRange+maxTravel;
+        const relVX=player.vx-dummy.vx, relVY=player.vy-dummy.vy;
+        const lead=clamp(dist/(ATTACK.lungeSpeedBase+90),0.12,0.55);
+        const predictedX=clamp(player.x+player.vx*lead,map.x+player.r,map.x+map.w-player.r);
+        const predictedY=clamp(player.y+player.vy*lead,map.y+player.r,map.y+map.h-player.r);
+        const predictedDist=Math.hypot(predictedX-(dummy.x+dummy.vx*lead),predictedY-(dummy.y+dummy.vy*lead));
+        const safeFromDefense=!(block.state==='active' || (player.immuneT>0 && RESURGEON.immuneToDamage));
+        const canCharge=currentMap==='Test run' && safeFromDefense && dummy.swingCD<=0 && predictedDist<meleeRange+maxTravel;
         if(canCharge){
           // Size charge to the distance deficit: close hits use a quick tap; longer gaps use the
           // lunge bar proportionally. Aim at the survivor's predicted position at impact time.
-          const lead=clamp(dist/(ATTACK.lungeSpeedBase+90),0.12,0.55);
-          const predictedX=clamp(player.x+player.vx*lead,map.x+player.r,map.x+map.w-player.r);
-          const predictedY=clamp(player.y+player.vy*lead,map.y+player.r,map.y+map.h-player.r);
           const aimX=predictedX-dummy.x, aimY=predictedY-dummy.y;
           killerAI.aim=Math.atan2(aimY,aimX);
-          const deficit=Math.max(0,dist-meleeRange);
-          killerAI.chargeGoal=clamp(deficit/maxTravel,0.08,1);
+          const closingSpeed=(relVX*dx+relVY*dy)/dist;
+          const interceptGap=Math.max(0,predictedDist-meleeRange-Math.max(0,closingSpeed)*lead*0.35);
+          killerAI.chargeGoal=clamp(interceptGap/maxTravel,0.06,1);
           killerAI.charge=Math.min(killerAI.chargeGoal,killerAI.charge+ddt/CHARGE_TIME);
           dummy.face=killerAI.aim;
           if(killerAI.charge>=killerAI.chargeGoal){
@@ -2997,7 +3009,7 @@
             killerAI.lungeSpeed=ATTACK.lungeSpeedBase+killerAI.charge*ATTACK.lungeSpeedExtra;
             killerAI.charge=0; killerAI.chargeGoal=0;
           }
-        } else if(currentMap==='Test run') { killerAI.charge=0; killerAI.chargeGoal=0; }
+        } else if(currentMap==='Test run') { killerAI.charge=0; killerAI.chargeGoal=0; if(!safeFromDefense) dummy.swingCD=Math.max(dummy.swingCD,0.18); }
         else if(dummy.swingCD<=0 && dist<=meleeRange) { dummy.swinging=true; dummy.swingT=0; dummy.swingHitDone=false; dummy.swingCD=KILLER_CD; killerAI.lungeSpeed=ATTACK.lungeSpeedBase; killerAI.aim=Math.atan2(dy,dx); }
       }
       if (dummy.swinging && !dummy.swingHitDone &&
