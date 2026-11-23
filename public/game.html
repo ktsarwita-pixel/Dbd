@@ -674,6 +674,7 @@
   let menuOpen = false;
   let mapOptionsOpen = false;
   let currentMap = 'Baseplate';
+  const chaseAI = { x:0, y:0, think:0, phase:0 };
   let infoOpen = false;       // shows the pre-game notice message
   let infoAnim = 0;           // 0..1 animated open state of the info overlay
   // Info overlay pages: 'notice' (landing) -> 'ainfo' (mechanics) or 'updates' (changelog).
@@ -766,6 +767,7 @@
     dummy.vx=0; dummy.vy=0; dummy.spin=0; dummy.spinVel=0; dummy.flash=0; dummy.stunT=0;
     dummy.swinging=false; dummy.swingT=0; dummy.swingHitDone=false; dummy.swingCD=1.0;
     dummy.x = map.x + dummy.fx*map.w; dummy.y = map.y + dummy.fy*map.h;
+    chaseAI.x=0; chaseAI.y=0; chaseAI.think=0; chaseAI.phase=0;
     attack.active=false; attack.timer=0; attack.hitDone=false; attack.overcharged=false; attack.bursted=false; attack.combo=false;
     attack.hardStab=false;
     hardStabHits=0; hardStabReady=false; hardStabArmFX=0; hardStabAnim=0; hardStabGlow=0; hardStabFireFX=0;
@@ -2817,15 +2819,37 @@
     player.x = clamp(player.x, map.x+player.r, map.x+map.w-player.r);
     player.y = clamp(player.y, map.y+player.r, map.y+map.h-player.r);
 
-    // Test run is a live chase in either role: the survivor flees as killer, while the killer pursues as survivor.
+    // Test run AI: periodically scores many short routes, predicts the player's motion,
+    // avoids pinning itself to map edges, and varies its dodge so it doesn't run in a straight line.
     if (currentMap === 'Test run' && !dummy.dead && dummy.stunT <= 0) {
-      const targetX = mode === 'killer' ? dummy.x - player.x : player.x - dummy.x;
-      const targetY = mode === 'killer' ? dummy.y - player.y : player.y - dummy.y;
-      const distance = Math.hypot(targetX,targetY) || 1;
-      const speed = mode === 'killer' ? 82 : 105;
-      const desiredX=targetX/distance*speed, desiredY=targetY/distance*speed;
-      const blend=1-Math.exp(-3*ddt);
-      dummy.vx+=(desiredX-dummy.vx)*blend; dummy.vy+=(desiredY-dummy.vy)*blend;
+      chaseAI.think -= ddt;
+      const dx=player.x-dummy.x, dy=player.y-dummy.y, distance=Math.hypot(dx,dy)||1;
+      if (chaseAI.think<=0) {
+        chaseAI.think=0.16; chaseAI.phase+=1;
+        const flee=mode==='killer';
+        const horizon=flee?0.62:0.42;
+        const px=player.x+player.vx*horizon, py=player.y+player.vy*horizon;
+        const base=Math.atan2(flee ? -dy : py-dummy.y, flee ? -dx : px-dummy.x);
+        let best=-Infinity, bestA=base;
+        // Test candidate headings against predicted separation and edge danger.
+        for(let i=0;i<24;i++){
+          const a=i*Math.PI*2/24;
+          const speed=flee?150:176;
+          const tx=dummy.x+Math.cos(a)*speed*horizon, ty=dummy.y+Math.sin(a)*speed*horizon;
+          const edge=Math.min(tx-map.x,map.x+map.w-tx,ty-map.y,map.y+map.h-ty);
+          const sep=Math.hypot(tx-px,ty-py);
+          const heading=Math.cos(a-base);
+          const inertia=Math.cos(a-Math.atan2(dummy.vy,dummy.vx));
+          let score=flee ? sep*1.15 + Math.min(edge,100)*1.1 + heading*12 + inertia*8
+                         : -sep*1.25 + Math.min(edge,80)*0.18 + heading*18 + inertia*5;
+          // When close, side-step attacks instead of blindly running directly away.
+          if(flee && distance<155) score += Math.sin(a-base)*(chaseAI.phase%2?18:-18);
+          if(score>best){best=score;bestA=a;}
+        }
+        chaseAI.x=Math.cos(bestA)*(flee?150:176); chaseAI.y=Math.sin(bestA)*(flee?150:176);
+      }
+      const blend=1-Math.exp(-5.5*ddt);
+      dummy.vx+=(chaseAI.x-dummy.vx)*blend; dummy.vy+=(chaseAI.y-dummy.vy)*blend;
       dummy.x=clamp(dummy.x+dummy.vx*ddt,map.x+dummy.r,map.x+map.w-dummy.r);
       dummy.y=clamp(dummy.y+dummy.vy*ddt,map.y+dummy.r,map.y+map.h-dummy.r);
     }
@@ -2918,7 +2942,8 @@
         if (dummy.swingT >= ATTACK.duration) { dummy.swinging=false; dummy.swingT=0; }
       } else {
         dummy.swingCD -= ddt;
-        if (dummy.swingCD <= 0) { dummy.swinging=true; dummy.swingT=0; dummy.swingHitDone=false; dummy.swingCD=KILLER_CD; }
+        const attackRange=BOX.fwd+BOX.halfLen+player.r+18;
+        if (dummy.swingCD <= 0 && Math.hypot(player.x-dummy.x,player.y-dummy.y)<=attackRange) { dummy.swinging=true; dummy.swingT=0; dummy.swingHitDone=false; dummy.swingCD=KILLER_CD; }
       }
       if (dummy.swinging && !dummy.swingHitDone &&
           dummy.swingT >= ATTACK.hitStart*ATTACK.duration &&
