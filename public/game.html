@@ -3083,11 +3083,21 @@
         const dx=player.x-dummy.x, dy=player.y-dummy.y, dist=Math.hypot(dx,dy)||1;
         const meleeRange=BOX.fwd+BOX.halfLen+player.r+8;
         const maxTravel=ATTACK.lungeSpeedBase*ATTACK.lungeTime + ATTACK.lungeSpeedExtra*ATTACK.lungeTime;
-        const lead=ATTACK.hitStart*ATTACK.duration+0.06;
-        const predictedX=clamp(player.x+player.vx*lead,map.x+player.r,map.x+map.w-player.r);
-        const predictedY=clamp(player.y+player.vy*lead,map.y+player.r,map.y+map.h-player.r);
-        // Chasing pauses during charge; do not extrapolate stale killer velocity into its range estimate.
-        const predictedDist=Math.hypot(predictedX-dummy.x,predictedY-dummy.y);
+        const windupLead=ATTACK.hitStart*ATTACK.duration+0.06;
+        // Predict the full charge + lunge intercept, not only the short swing windup. Iterate
+        // charge fraction and flight time so moving survivors are aimed at the likely hit point.
+        let predictedX=clamp(player.x+player.vx*windupLead,map.x+player.r,map.x+map.w-player.r);
+        let predictedY=clamp(player.y+player.vy*windupLead,map.y+player.r,map.y+map.h-player.r);
+        let predictedDist=Math.hypot(predictedX-dummy.x,predictedY-dummy.y);
+        for(let n=0;n<2;n++){
+          const chargeEstimate=clamp((predictedDist-meleeRange)/Math.max(1,maxTravel),0,1);
+          const attackSpeed=ATTACK.lungeSpeedBase+chargeEstimate*ATTACK.lungeSpeedExtra;
+          const flightTime=clamp((predictedDist-meleeRange)/Math.max(1,attackSpeed),0,ATTACK.lungeTime);
+          const interceptLead=clamp(windupLead+chargeEstimate*CHARGE_TIME+flightTime,windupLead,windupLead+CHARGE_TIME+ATTACK.lungeTime);
+          predictedX=clamp(player.x+player.vx*interceptLead,map.x+player.r,map.x+map.w-player.r);
+          predictedY=clamp(player.y+player.vy*interceptLead,map.y+player.r,map.y+map.h-player.r);
+          predictedDist=Math.hypot(predictedX-dummy.x,predictedY-dummy.y);
+        }
         const safeFromDefense=!(block.state==='active' || (player.immuneT>0 && RESURGEON.immuneToDamage));
         const canCharge=currentMap==='Test run' && safeFromDefense && dummy.swingCD<=0 && predictedDist<meleeRange+maxTravel;
         if(canCharge){
