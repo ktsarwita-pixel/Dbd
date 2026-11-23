@@ -2842,7 +2842,8 @@
         let best=-Infinity, bestA=base;
         const speed=flee?185:205;
         const currentHeading=chaseAI.phase>1?chaseAI.heading:base;
-        // Score a dense fan of candidate routes against two future positions; turn-cost stabilizes steering.
+        // Receding-horizon route planner (MPC): independent progress, spacing, hazard, wall,
+        // attack-response, and steering-continuity scorers evaluate 32 candidate velocities.
         for(let i=0;i<32;i++){
           const a=i*Math.PI*2/32;
           const tx=dummy.x+Math.cos(a)*speed*horizon, ty=dummy.y+Math.sin(a)*speed*horizon;
@@ -2859,45 +2860,41 @@
               const kd=Math.hypot(tx-kx,ty-ky); if(kd<dummy.r+THROW.radius+42) hazardPenalty+=(dummy.r+THROW.radius+42-kd)*2.8;
             }
           }
-          const sep=sepNear*0.58+sepFar*0.42;
           const heading=Math.cos(a-base);
           const inertia=Math.cos(a-currentHeading);
-          let turnDelta=Math.atan2(Math.sin(a-currentHeading),Math.cos(a-currentHeading));
-          // Strong smooth repulsion from every border; corner positions pay two penalties at once.
-          const wallRisk=260/(Math.max(8,left)+24)+260/(Math.max(8,right)+24)+260/(Math.max(8,top)+24)+260/(Math.max(8,bottom)+24);
-          // Independent planner terms: separation/intercept, preferred spacing, wall safety,
-          // and heading continuity. The chase planner maintains a soft standoff instead of
-          // steering through the player and relying on body collision to separate them.
+          const turnDelta=Math.atan2(Math.sin(a-currentHeading),Math.cos(a-currentHeading));
           const preferredGap=(block.state==='active' || (player.immuneT>0 && RESURGEON.immuneToDamage))
             ? BOX.fwd+BOX.halfLen+player.r+82
             : (dummy.swingCD<=0 ? BOX.fwd+BOX.halfLen+player.r+maxLungeGap() : BOX.fwd+BOX.halfLen+player.r+22);
-          const spacingError=(Math.abs(sepNear-preferredGap)*0.58+Math.abs(sepFar-preferredGap)*0.42);
-          const progressScore=flee ? sep*1.55 : -spacingError*1.65;
-          const safetyScore=-wallRisk*(flee?220:90)-hazardPenalty;
-          const continuityScore=heading*(flee?3:4)+inertia*(flee?12:10);
-          let score=progressScore+safetyScore+continuityScore;
-          // Favor outward escape most of the time; only hard-dodge across the attack line when a swing/charge is imminent.
-          if(flee && distance<210 && (charging || attack.active)) {
-            const futurePX=clamp(player.x+threatVX*0.34,map.x+player.r,map.x+map.w-player.r);
-            const futurePY=clamp(player.y+threatVY*0.34,map.y+player.r,map.y+map.h-player.r);
-            const approach=Math.atan2(futurePY-dummy.y,futurePX-dummy.x);
-            const lateral=Math.abs(Math.sin(a-approach));
-            score += lateral*Math.max(0,210-distance)*0.55;
-            if(distance<105 && edge>dummy.r+18) score += lateral*28;
-            // If the killer is charging or already swinging, actively evade the weapon line.
-            if(distance<230 && (charging || attack.active)) {
-              const weaponLine=player.angle;
-              const sideStep=Math.abs(Math.sin(a-weaponLine));
-              const predictedGap=Math.hypot(tx-(player.x+player.vx*0.24),ty-(player.y+player.vy*0.24));
-              const weaponReach=BOX.fwd+BOX.halfLen+player.r+22;
-              const linePenalty=predictedGap<weaponReach ? (weaponReach-predictedGap)*3.2 : 0;
-              score += sideStep*Math.max(0,230-distance)*0.95 - linePenalty;
-            }
+          // Velocity-obstacle / closest-point-of-approach forecast: predicts where this route
+          // and the moving player converge instead of only comparing current-frame distances.
+          const rvx=threatVX-Math.cos(a)*speed, rvy=threatVY-Math.sin(a)*speed;
+          const rv2=rvx*rvx+rvy*rvy;
+          const cpaT=rv2>1?clamp(-((player.x-dummy.x)*rvx+(player.y-dummy.y)*rvy)/rv2,0,horizon):0;
+          const pCPA=forecast(cpaT);
+          const aCPA=Math.hypot(dummy.x+Math.cos(a)*speed*cpaT-pCPA.x,dummy.y+Math.sin(a)*speed*cpaT-pCPA.y);
+          const spacingError=Math.abs(sepNear-preferredGap)*0.58+Math.abs(sepFar-preferredGap)*0.42;
+          const interceptScore=Math.exp(-Math.abs(aCPA-preferredGap)/105)*0.62+Math.exp(-spacingError/115)*0.38;
+          const escapeScore=clamp((aCPA-distance+135)/300,0,1);
+          const edgeScore=clamp((edge-10)/125,0,1);
+          const hazardScore=clamp(1-hazardPenalty/180,0,1);
+          const continuityScore=(1+Math.cos(turnDelta))*0.5;
+          const intentScore=(1+heading)*0.5;
+          let dodgeScore=0;
+          if(flee && distance<240 && (charging || attack.active)){
+            const attackAxis=Math.abs(Math.sin(a-player.angle));
+            const gapAtImpact=Math.hypot(tx-(player.x+player.vx*0.22),ty-(player.y+player.vy*0.22));
+            dodgeScore=clamp(attackAxis*0.62+gapAtImpact/300,0,1);
           }
-          // Strong steering hysteresis prevents candidate headings from flipping back and forth
-          // as tiny player-velocity changes reorder nearly-equal routes.
-          score += Math.cos(a-currentHeading)*(flee?48:64);
-          score-=Math.abs(turnDelta)*(flee?34:42);
+          // Normalized expert scores keep unrelated units (pixels, radians, trap damage)
+          // from dominating. Weights adapt to role and imminent danger.
+          const imminent=flee && distance<210 && (charging || attack.active);
+          let score=flee
+            ? escapeScore*(imminent?0.31:0.43)+edgeScore*(imminent?0.20:0.22)+hazardScore*0.16
+              +continuityScore*0.10+intentScore*0.04+dodgeScore*(imminent?0.19:0.05)
+            : interceptScore*0.50+edgeScore*0.18+hazardScore*0.06+continuityScore*0.18+intentScore*0.08;
+          // Bounded hysteresis stabilizes close alternatives without swamping the route scores.
+          score+=Math.cos(a-currentHeading)*0.08-Math.abs(turnDelta)/Math.PI*0.06;
           if(score>best){best=score;bestA=a;}
         }
         chaseAI.heading=bestA;
