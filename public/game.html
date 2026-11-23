@@ -2828,7 +2828,7 @@
       const urgentThreat=mode==='killer' && (charging || attack.active || knife.state==='out' || knife.state==='return');
       chaseAI.think=urgentThreat?0:chaseAI.think-ddt;
       if (chaseAI.think<=0) {
-        chaseAI.think=urgentThreat?0.025:0.075; chaseAI.phase+=1;
+        chaseAI.think=urgentThreat?0.11:0.16; chaseAI.phase+=1;
         const flee=mode==='killer';
         const horizon=flee?0.82:0.52;
         // Extrapolate short and long pursuit paths, clamping forecasts to the arena so a
@@ -2884,7 +2884,8 @@
               score += sideStep*Math.max(0,230-distance)*0.95 - linePenalty;
             }
           }
-          score-=Math.abs(turnDelta)*(flee?8:5);
+          score += Math.cos(a-chaseAI.heading)*(flee?22:30);
+          score-=Math.abs(turnDelta)*(flee?18:22);
           if(score>best){best=score;bestA=a;}
         }
         chaseAI.heading=bestA;
@@ -2900,9 +2901,9 @@
         if(curSpeed>speed){ const scale=speed/curSpeed; dummy.vx*=scale; dummy.vy*=scale; curSpeed=speed; }
         const curAngle=curSpeed>8?Math.atan2(dummy.vy,dummy.vx):desiredAngle;
         let turn=Math.atan2(Math.sin(desiredAngle-curAngle),Math.cos(desiredAngle-curAngle));
-        turn=clamp(turn,-(threat?10:5.5)*ddt,(threat?10:5.5)*ddt);
+        turn=clamp(turn,-(threat?6.5:3.8)*ddt,(threat?6.5:3.8)*ddt);
         const nextAngle=curAngle+turn;
-        const accel=1-Math.exp(-(threat?13:5.5)*ddt);
+        const accel=1-Math.exp(-(threat?8:4.2)*ddt);
         const nextSpeed=clamp(curSpeed+(speed-curSpeed)*accel,0,speed);
         dummy.vx=Math.cos(nextAngle)*nextSpeed; dummy.vy=Math.sin(nextAngle)*nextSpeed;
         const nx=clamp(dummy.x+dummy.vx*ddt,map.x+dummy.r,map.x+map.w-dummy.r);
@@ -3022,8 +3023,10 @@
           // lunge bar proportionally. Aim at the survivor's predicted position at impact time.
           const aimX=predictedX-dummy.x, aimY=predictedY-dummy.y;
           killerAI.aim=Math.atan2(aimY,aimX);
-          const closingSpeed=(relVX*dx+relVY*dy)/dist;
-          const interceptGap=Math.max(0,predictedDist-meleeRange-Math.max(0,closingSpeed)*lead*0.35);
+          // Positive means the gap is shrinking. (The previous sign treated a fleeing player
+          // as closing, which systematically undercharged and made lunges miss behind them.)
+          const closingSpeed=-((relVX*dx+relVY*dy)/dist);
+          const interceptGap=Math.max(0,predictedDist-meleeRange-Math.max(0,closingSpeed)*lead);
           killerAI.chargeGoal=clamp(interceptGap/maxTravel,0.06,1);
           killerAI.charge=Math.min(killerAI.chargeGoal,killerAI.charge+ddt/CHARGE_TIME);
           dummy.face=killerAI.aim;
