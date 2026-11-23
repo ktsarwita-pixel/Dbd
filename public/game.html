@@ -6326,13 +6326,25 @@
   setInterval(() => { if (adminPanel.style.display === 'block') adminRefresh(); }, 400);
   adminRefresh();
 
+  let rafId = 0;
   function loop(now){
+    if (document.hidden) { rafId = 0; return; }
     const dt=Math.min((now-last)/1000, 0.05);
     last=now;
     adminFrame(now);
     update(dt); draw();
-    requestAnimationFrame(loop);
+    rafId=requestAnimationFrame(loop);
   }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      if (rafId) cancelAnimationFrame(rafId);
+      rafId = 0;
+      last = performance.now();
+    } else if (!rafId) {
+      last = performance.now();
+      rafId = requestAnimationFrame(loop);
+    }
+  });
 
   window.addEventListener('resize', resize);
   window.addEventListener('orientationchange', resize);
@@ -6345,7 +6357,7 @@
   layoutPlayer();
   initAmbientMotes();
   setTimeout(resize, 250);   // catch late mobile layout / URL-bar settle
-  requestAnimationFrame(loop);
+  rafId=requestAnimationFrame(loop);
 })();
 </script>
 </body>
