@@ -2903,6 +2903,10 @@
           // Penalize simultaneous proximity to two walls, especially when the killer is distant.
           const nearX=Math.min(left,right), nearY=Math.min(top,bottom);
           const cornerPenalty=Math.exp(-nearX/120)*Math.exp(-nearY/120);
+          const targetNearX=Math.min(player.x-map.x,map.x+map.w-player.x);
+          const targetNearY=Math.min(player.y-map.y,map.y+map.h-player.y);
+          const targetCornerRisk=Math.exp(-targetNearX/180)*Math.exp(-targetNearY/180);
+          const killerCornerPenalty=Math.exp(-nearX/180)*Math.exp(-nearY/180)*(2.4*(1-0.7*targetCornerRisk));
           const hazardScore=clamp(1-hazardPenalty/180,0,1);
           const continuityScore=(1+Math.cos(turnDelta))*0.5;
           const intentScore=(1+heading)*0.5;
@@ -2922,7 +2926,8 @@
               : escapeScore*0.60+edgeScore*0.14+hazardScore*0.11+continuityScore*0.02
                 +intentScore*0.02+dodgeScore*0.05+genScore*0.05-cornerPenalty*0.55
             : interceptScore*0.36+progressScore*0.20-overshootPenalty*0.08
-              +edgeScore*0.14+hazardScore*0.05+continuityScore*0.12+intentScore*0.07+genScore*0.06;
+              +edgeScore*0.14+hazardScore*0.05+continuityScore*0.12+intentScore*0.07+genScore*0.06
+              -killerCornerPenalty;
           // A survivor pressed against a wall needs an inward escape lane, even if the
           // immediate flee vector points along the wall toward another dead end.
           if(wallRecoveryWeight>0) score+=wallRecoveryWeight*clamp((edge-currentEdge)/90,-1,1);
